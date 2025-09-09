@@ -1,6 +1,8 @@
 package com.yupi.springbootinit.model.vo;
 
 import cn.hutool.json.JSONUtil;
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableId;
 import com.yupi.springbootinit.model.entity.ScoringResult;
 import lombok.Data;
 import org.springframework.beans.BeanUtils;
@@ -24,14 +26,34 @@ public class ScoringResultVO implements Serializable {
     private Long id;
 
     /**
-     * 标题
+     * 结果名称，如物流师
      */
-    private String title;
+    private String resultName;
 
     /**
-     * 内容
+     * 结果描述
      */
-    private String content;
+    private String resultDesc;
+
+    /**
+     * 结果图片
+     */
+    private String resultPicture;
+
+    /**
+     * 结果属性集合 JSON，如 [I,S,T,J]
+     */
+    private List<String> resultProp;
+
+    /**
+     * 结果得分范围，如 80，表示 80及以上的分数命中此结果
+     */
+    private Integer resultScoreRange;
+
+    /**
+     * 应用 id
+     */
+    private Long appId;
 
     /**
      * 创建用户 id
@@ -47,11 +69,6 @@ public class ScoringResultVO implements Serializable {
      * 更新时间
      */
     private Date updateTime;
-
-    /**
-     * 标签列表
-     */
-    private List<String> tagList;
 
     /**
      * 创建用户信息
@@ -70,8 +87,7 @@ public class ScoringResultVO implements Serializable {
         }
         ScoringResult scoringResult = new ScoringResult();
         BeanUtils.copyProperties(scoringResultVO, scoringResult);
-        List<String> tagList = scoringResultVO.getTagList();
-        scoringResult.setTags(JSONUtil.toJsonStr(tagList));
+        scoringResult.setResultProp(JSONUtil.toJsonStr(scoringResultVO.getResultProp()));
         return scoringResult;
     }
 
@@ -87,7 +103,7 @@ public class ScoringResultVO implements Serializable {
         }
         ScoringResultVO scoringResultVO = new ScoringResultVO();
         BeanUtils.copyProperties(scoringResult, scoringResultVO);
-        scoringResultVO.setTagList(JSONUtil.toList(scoringResult.getTags(), String.class));
+        scoringResultVO.setResultProp(JSONUtil.toList(scoringResult.getResultProp(), String.class));
         return scoringResultVO;
     }
 }
