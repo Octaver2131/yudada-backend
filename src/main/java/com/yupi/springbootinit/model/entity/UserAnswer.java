@@ -16,7 +16,7 @@ import lombok.extern.java.Log;
 @Data
 public class UserAnswer {
     /**
-     * 
+     * id
      */
     @TableId(type = IdType.ASSIGN_ID)
     private Long id;
