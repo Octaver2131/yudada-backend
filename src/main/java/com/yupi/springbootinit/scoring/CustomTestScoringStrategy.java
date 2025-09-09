@@ -20,6 +20,7 @@ import java.util.Map;
 /**
  * 自定义测评分类应用评分策略
  */
+@ScoringStrategyConfig(appType = 1, scoringStrategy = 0)
 public class CustomTestScoringStrategy implements ScoringStrategy {
 
     @Resource
