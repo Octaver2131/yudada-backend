@@ -103,7 +103,6 @@ public class AiMananger {
      * 通用流式请求（简化请求传递）
      * @param systemMessages
      * @param userMessages
-     * @param stream
      * @param temperature
      * @return
      */
