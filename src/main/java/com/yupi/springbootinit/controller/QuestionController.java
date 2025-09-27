@@ -23,9 +23,9 @@ import com.yupi.springbootinit.service.QuestionService;
 import com.yupi.springbootinit.service.UserService;
 import com.zhipu.oapi.service.v4.model.ModelData;
 import io.reactivex.Flowable;
+import io.reactivex.Scheduler;
 import io.reactivex.schedulers.Schedulers;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.BeanUtils;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -58,6 +58,9 @@ public class QuestionController {
 
     @Resource
     private AiMananger aiManager;
+
+    @Resource
+    private Scheduler vipScheduler;
 
 
     // region 增删改查
@@ -264,23 +267,23 @@ public class QuestionController {
     // region AI 题目生成功能
     private static final String GENERATE_QUESTION_SYSTEM_MESSAGE =
             "你是一位严谨的出题专家，我会给你如下信息：\n" +
-            "```\n" +
-            "应用名称，\n" +
-            "【【【应用描述】】】，\n" +
-            "应用类别，\n" +
-            "要生成的题目数，\n" +
-            "每个题目的选项数\n" +
-            "```\n" +
-            "\n" +
-            "请你根据上述信息，按照以下步骤来出题：\n" +
-            "1. 要求：题目和选项尽可能地短，题目不要包含序号，每题的选项数以我提供的为主，题目不能重复\n" +
-            "2. 严格按照下面的 json 格式输出题目和选项\n" +
-            "```\n" +
-            "[{\"options\":[{\"value\":\"选项内容\",\"key\":\"A\"},{\"value\":\"\",\"key\":\"B\"}],\"title\":\"题目标题\"}]\n" +
-            "```\n" +
-            "title \u061C是题目，options \u200C是选项，每个选项的 ke\u061Cy 按照英文字母序（比如\u2061 A、B、C、D）以此类\u061C推，value 是选项内容\n" +
-            "3. 检查题目是否包含序号，若包含序号则去除序号\n" +
-            "4. 返回的题目列表格式必须为 JSON 数组\n";
+                    "```\n" +
+                    "应用名称，\n" +
+                    "【【【应用描述】】】，\n" +
+                    "应用类别，\n" +
+                    "要生成的题目数，\n" +
+                    "每个题目的选项数\n" +
+                    "```\n" +
+                    "\n" +
+                    "请你根据上述信息，按照以下步骤来出题：\n" +
+                    "1. 要求：题目和选项尽可能地短，题目不要包含序号，每题的选项数以我提供的为主，题目不能重复\n" +
+                    "2. 严格按照下面的 json 格式输出题目和选项\n" +
+                    "```\n" +
+                    "[{\"options\":[{\"value\":\"选项内容\",\"key\":\"A\"},{\"value\":\"\",\"key\":\"B\"}],\"title\":\"题目标题\"}]\n" +
+                    "```\n" +
+                    "title \u061C是题目，options \u200C是选项，每个选项的 ke\u061Cy 按照英文字母序（比如\u2061 A、B、C、D）以此类\u061C推，value 是选项内容\n" +
+                    "3. 检查题目是否包含序号，若包含序号则去除序号\n" +
+                    "4. 返回的题目列表格式必须为 JSON 数组\n";
 
     /**
      * 生成题目的用户信息
@@ -322,7 +325,7 @@ public class QuestionController {
     }
 
     @GetMapping("/ai_generate/sse")
-    public SseEmitter aiGenerateQuestionSSE(AiGenerateQuestionRequest aiGenerateQuestionRequest) {
+    public SseEmitter aiGenerateQuestionSSE(AiGenerateQuestionRequest aiGenerateQuestionRequest, HttpServletRequest  request) {
         ThrowUtils.throwIf(aiGenerateQuestionRequest == null, ErrorCode.PARAMS_ERROR);
         // 获取参数
         Long appId = aiGenerateQuestionRequest.getAppId();
@@ -341,7 +344,15 @@ public class QuestionController {
         AtomicInteger counter = new AtomicInteger(0);
         // 拼接完整题目
         StringBuilder stringBuilder = new StringBuilder();
-        modelDataFlowable.subscribeOn(Schedulers.io())
+
+        // 获取登录用户
+        User loginUser = userService.getLoginUser(request);
+        // 默认全局线程池
+        Scheduler scheduler = Schedulers.io();
+        if ("vip".equals(loginUser.getUserRole())) {
+            scheduler = vipScheduler;
+        }
+        modelDataFlowable.subscribeOn(scheduler)
                 .map(modelData -> modelData.getChoices().get(0).getDelta().getContent())
                 .map(message -> message.replaceAll("\\s", ""))
                 .filter(StrUtil::isNotBlank)
@@ -374,9 +385,77 @@ public class QuestionController {
                 .doOnComplete(sseEmitter::complete)
                 .subscribe();
         return sseEmitter;
-
     }
 
+    // 仅测试隔离线程池使用
+    @Deprecated
+    @GetMapping("/ai_generate/sse/test")
+    public SseEmitter aiGenerateQuestionSSETest(AiGenerateQuestionRequest aiGenerateQuestionRequest,
+                                                boolean isVip) {
+        ThrowUtils.throwIf(aiGenerateQuestionRequest == null, ErrorCode.PARAMS_ERROR);
+        // 获取参数
+        Long appId = aiGenerateQuestionRequest.getAppId();
+        int questionNumber = aiGenerateQuestionRequest.getQuestionNumber();
+        int optionNumber = aiGenerateQuestionRequest.getOptionNumber();
+        // 获取应用信息
+        App app = appService.getById(appId);
+        ThrowUtils.throwIf(app == null, ErrorCode.NOT_FOUND_ERROR);
+        // 封装 Prompt
+        String userMessage = getGenerateQuestionUserMessage(app, questionNumber, optionNumber);
+        // 建立 SSE 连接对象，0 表示永不超时
+        SseEmitter sseEmitter = new SseEmitter(0L);
+        // AI 生成，SSE 流式返回
+        Flowable<ModelData> modelDataFlowable = aiManager.doStreamRequest(GENERATE_QUESTION_SYSTEM_MESSAGE, userMessage, null);
+        // 左括号计数器，除了默认值外，当回归为 0 时，表示左括号等于右括号，可以截取
+        AtomicInteger counter = new AtomicInteger(0);
+        // 拼接完整题目
+        StringBuilder stringBuilder = new StringBuilder();
+        // 默认全局线程池
+        Scheduler scheduler = Schedulers.single();
+        if (isVip) {
+            scheduler = vipScheduler;
+        }
+        modelDataFlowable.observeOn(scheduler)
+                .map(modelData -> modelData.getChoices().get(0).getDelta().getContent())
+                .map(message -> message.replaceAll("\\s", ""))
+                .filter(StrUtil::isNotBlank)
+                .flatMap(message -> {
+                    List<Character> characterList = new ArrayList<>();
+                    for (char c : message.toCharArray()) {
+                        characterList.add(c);
+                    }
+                    return Flowable.fromIterable(characterList);
+                })
+                .doOnNext(c -> {
+                    // 如果是 '{'，计数器 + 1
+                    if (c == '{') {
+                        counter.addAndGet(1);
+                    }
+                    if (counter.get() > 0) {
+                        stringBuilder.append(c);
+                    }
+                    if (c == '}') {
+                        counter.addAndGet(-1);
+                        if (counter.get() == 0) {
+                            // 输出当前线程的名称
+                            System.out.println(Thread.currentThread().getName());
+                            // 模拟普通用户阻塞
+                            if (!isVip) {
+                                Thread.sleep(10000L);
+                            }
+                            // 可以拼接题目，并且通过 SSE 返回给前端
+                            sseEmitter.send(JSONUtil.toJsonStr(stringBuilder.toString()));
+                            // 重置，继续拼接下一题
+                            stringBuilder.setLength(0);
+                        }
+                    }
+                })
+                .doOnError((e) -> log.error("SSE Error", e))
+                .doOnComplete(sseEmitter::complete)
+                .subscribe();
+        return sseEmitter;
+    }
 
     // endregion
+
 }
